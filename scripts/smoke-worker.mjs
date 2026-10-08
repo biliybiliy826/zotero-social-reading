@@ -14,8 +14,11 @@ const send = async (method, path, body, authenticated = false) => {
 };
 
 assert.equal((await send('GET', '/v1/health')).status, 200);
-assert.equal((await send('POST', '/v1/identify', { filePath: '/secret.pdf', sha256: digest, title: 'Paper' })).status, 400);
-assert.equal((await send('POST', '/v1/identify', { sha256: digest, title: 'Paper' })).status, 200);
+assert.deepEqual((await send('GET', `/v1/documents/${digest}/marks`)).data.marks, []);
+assert.equal((await send('GET', `/v1/documents/${digest}/guides?tier=beginner`)).data.guide, null);
+assert.equal((await send('POST', '/v1/identify', { sha256: digest, title: 'Paper' })).status, 401);
+assert.equal((await send('POST', '/v1/identify', { filePath: '/secret.pdf', sha256: digest, title: 'Paper' }, true)).status, 400);
+assert.equal((await send('POST', '/v1/identify', { sha256: digest, title: 'Paper' }, true)).status, 200);
 assert.deepEqual((await send('GET', `/v1/documents/${digest}/marks`)).data.marks, []);
 assert.equal((await send('GET', `/v1/documents/${digest}/guides?tier=beginner`)).data.guide, null);
 const mark = { id: randomUUID(), pageIndex: 0, rects: [[1, 2, 3, 4]],

@@ -15,7 +15,7 @@ npm test
 npm run build
 ```
 
-Install `dist/zotero-social-reading-0.2.1.xpi` in Zotero's Add-ons manager. The PDF toolbar has separate **公共划线** and **公共笔记** switches, plus **AI 导读**. Select PDF text and choose **发表讨论** to publish a comment. Personal Zotero annotations are never uploaded automatically.
+Install `dist/zotero-social-reading-0.2.2.xpi` in Zotero's Add-ons manager. The PDF toolbar has separate **公共划线** and **公共笔记** switches, plus **AI 导读**. Select PDF text and choose **发表讨论** to publish a comment. Personal Zotero annotations are never uploaded automatically.
 
 The current shared pilot URL is `https://zotero-social-reading-api.zotero-social-reading.workers.dev`. Enter it under **AI 导读 → 共享服务设置**. Anonymous reading needs only the URL; publishing currently requires an invited-user token from the maintainer. The token is stored under the Zotero data directory at `social-reading/cloud-token`; it must not be committed to Git. Until a hosted endpoint is configured, the plugin continues to use the loopback prototype at `127.0.0.1:34241` for comments. The optional local AI bridge always runs on loopback; start it with `npm run serve` to generate guides. It creates its own private `dev-token` in that directory. The bridge's PDF file access is restricted to Zotero storage and it must never be exposed to the internet.
 

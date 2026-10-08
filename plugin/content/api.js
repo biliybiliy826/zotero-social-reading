@@ -8,6 +8,7 @@ var ZSRApi = class {
     this.localToken = null;
     this.cloudToken = null;
     this.pdfDigestCache = new Map();
+    this.documentTitles = new Map();
   }
 
   get cloudEnabled() { return Boolean(this.endpoint); }
@@ -64,12 +65,21 @@ var ZSRApi = class {
 
   async identify(filePath, title) {
     if (!this.cloudEnabled) return this.request('POST', '/identify', { filePath, title });
-    return this.request('POST', '/identify', { sha256: await this.pdfSHA256(filePath), title });
+    const id = await this.pdfSHA256(filePath);
+    await this.request('GET', '/health');
+    this.documentTitles.set(id, title);
+    return { document: { id, title } };
+  }
+  ensureCloudDocument(documentId) {
+    const title = this.documentTitles.get(documentId);
+    if (!title) throw new Error('请重新打开 PDF 后再发表');
+    return this.request('POST', '/identify', { sha256: documentId, title });
   }
   marks(documentId) { return this.request('GET', `/documents/${documentId}/marks`); }
-  publish(documentId, mark) {
-    return this.request('POST', `/documents/${documentId}/marks`,
-      this.cloudEnabled ? { id: Services.uuid.generateUUID().toString().replace(/[{}]/gu, ''), ...mark } : mark);
+  async publish(documentId, mark) {
+    if (this.cloudEnabled) await this.ensureCloudDocument(documentId);
+    return this.request('POST', `/documents/${documentId}/marks`, this.cloudEnabled ?
+      { id: Services.uuid.generateUUID().toString().replace(/[{}]/gu, ''), ...mark } : mark);
   }
   replies(markId) { return this.request('GET', `/marks/${markId}/replies`); }
   reply(markId, value) {
@@ -87,6 +97,7 @@ var ZSRApi = class {
   async publishDraft(draftId, ownerId, position, draft = null) {
     if (this.cloudEnabled) {
       if (!draft) throw new Error('AI 草稿信息不完整');
+      await this.ensureCloudDocument(draft.documentId);
       await this.request('POST', `/documents/${draft.documentId}/marks`, {
         id: draftId, ...position, quote: draft.quote, comment: draft.comment, authorKind: 'ai',
       });
@@ -101,8 +112,9 @@ var ZSRApi = class {
     return this.request('POST', '/guides/generate', { filePath, title, tier },
       { cloud: false, timeout: 210_000 });
   }
-  publishGuide(documentId, tier, guide) {
+  async publishGuide(documentId, tier, guide) {
     if (!this.cloudEnabled) throw new Error('请先配置共享服务地址');
+    await this.ensureCloudDocument(documentId);
     return this.request('POST', `/documents/${documentId}/guides`, {
       id: Services.uuid.generateUUID().toString().replace(/[{}]/gu, ''),
       tier, promptVersion: 1, overview: guide.overview, suggestions: guide.suggestions,

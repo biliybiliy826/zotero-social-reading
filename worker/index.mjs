@@ -95,6 +95,7 @@ async function route(request, env) {
     return json({ ok: true, service: 'zotero-social-reading', version: 1 });
   }
   if (method === 'POST' && url.pathname === '/v1/identify') {
+    await author(request, db);
     const body = await readBody(request);
     if ('filePath' in body || 'pdf' in body || 'content' in body) {
       throw new ApiError(400, 'Only a PDF digest and metadata may be sent');
@@ -109,7 +110,12 @@ async function route(request, env) {
   const docMatch = documentsPath.exec(url.pathname);
   if (docMatch) {
     const [, id, section] = docMatch;
-    await document(db, id);
+    const knownDocument = await db.prepare('SELECT id FROM documents WHERE id = ?').bind(id).first();
+    if (!knownDocument) {
+      if (method === 'GET' && section === 'marks') return json({ marks: [] });
+      if (method === 'GET' && section === 'guides') return json({ guide: null });
+      throw new ApiError(404, 'Unknown PDF');
+    }
     if (section === 'marks') {
       if (method === 'GET') {
         const page = url.searchParams.get('pageIndex');
