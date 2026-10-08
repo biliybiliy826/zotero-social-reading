@@ -15,6 +15,22 @@ var ZSRStyle = {
     .zsr-composer form button, .zsr-popover form button, .zsr-popover > button { margin-top: 10px; background: #246ab0; color: white; border: 0; border-radius: 6px; padding: 7px 11px; cursor: pointer; font: inherit; }
     .zsr-composer button:disabled, .zsr-popover button:disabled { opacity: .5; }
     .zsr-close { float: right; background: transparent !important; color: inherit !important; border: 0 !important; padding: 0 4px !important; font-size: 20px !important; line-height: 1 !important; cursor: pointer; }
+    .zsr-guide-panel { position: fixed; z-index: 12000; top: 66px; right: 14px; bottom: 12px; width: min(350px, 40vw); box-sizing: border-box; overflow: auto; padding: 16px; border: 1px solid #b9c8d9; border-radius: 10px; background: #fff; color: #213547; box-shadow: 0 8px 32px #0004; font: 13px/1.55 system-ui, sans-serif; }
+    .zsr-guide-panel header { display: flex; justify-content: space-between; align-items: center; font-size: 17px; }
+    .zsr-guide-panel label { display: block; margin: 12px 0; }
+    .zsr-guide-panel select, .zsr-guide-panel details input { box-sizing: border-box; width: 100%; padding: 7px; border: 1px solid #adbed1; border-radius: 5px; font: inherit; }
+    .zsr-guide-panel label input[type=checkbox] { margin-right: 6px; }
+    .zsr-guide-panel .zsr-guide-message { padding: 8px; border-radius: 6px; background: #f2f6fa; }
+    .zsr-guide-panel .zsr-guide-overview { white-space: pre-wrap; }
+    .zsr-guide-panel ol { padding-left: 22px; }
+    .zsr-guide-panel li { margin: 8px 0; }
+    .zsr-guide-panel li button { border: 0; background: none; color: #174d7b; cursor: pointer; text-align: left; font: inherit; }
+    .zsr-guide-panel li button:hover { text-decoration: underline; }
+    .zsr-guide-panel .zsr-guide-primary, .zsr-guide-panel details button { padding: 8px 11px; border: 0; border-radius: 6px; background: #246ab0; color: #fff; cursor: pointer; font: inherit; }
+    .zsr-guide-panel .zsr-guide-primary:disabled { opacity: .55; cursor: wait; }
+    .zsr-guide-panel details { margin-top: 20px; border-top: 1px solid #dde4ec; padding-top: 10px; }
+    .zsr-guide-panel details input { margin: 6px 0; }
+    .zsr-guide-panel .zsr-error { color: #b42318; }
   `,
   page: `
     .page > .zsr-overlay { position: absolute; inset: 0; z-index: 12; pointer-events: none; overflow: visible; }

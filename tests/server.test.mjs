@@ -12,7 +12,10 @@ test('two local readers share explicitly published marks, while AI stays draft u
   await writeFile(pdfPath, '%PDF-1.7\nprototype\n');
   const aiGenerator = async () => [{ pageIndex: 0, quote: 'A test statement in the PDF',
     comment: '这是 AI 提出的关键点，供读者确认。', kind: 'key_point' }];
-  const app = await createApp({ dataDir: root, port: 0, aiGenerator });
+  const guideGenerator = async ({ tier }) => ({ overview: `Guide for ${tier} readers.`,
+    suggestions: [{ pageIndex: 0, quote: 'A test statement in the PDF',
+      comment: '这是本机预览的导读。', kind: 'key_point' }] });
+  const app = await createApp({ dataDir: root, port: 0, aiGenerator, guideGenerator });
   try {
     const token = (await readFile(app.tokenPath, 'utf8')).trim();
     const base = `http://127.0.0.1:${app.address.port}`;
@@ -60,6 +63,14 @@ test('two local readers share explicitly published marks, while AI stays draft u
     assert.equal(aiMark.body.mark.authorName, 'AI 阅读助手');
     assert.equal((await request(`/api/documents/${id}/marks`)).body.marks.length, 2);
     assert.equal((await request(`/api/drafts/${draftId}/publish`, 'POST', { ...position, ownerId: 'reader-a' })).status, 409);
+    const guide = await request('/api/guides/generate', 'POST', {
+      filePath: pdfPath, title: 'Test paper', tier: 'beginner',
+    });
+    assert.equal(guide.status, 200);
+    assert.equal(guide.body.guide.suggestions.length, 1);
+    assert.equal((await request('/api/guides/generate', 'POST', {
+      filePath: pdfPath, title: 'Test paper', tier: 'not-a-tier',
+    })).status, 400);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

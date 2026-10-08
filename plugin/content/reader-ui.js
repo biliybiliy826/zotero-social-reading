@@ -14,6 +14,11 @@ var ZSRReaderView = class {
     this.pdfPath = null;
     this.marks = [];
     this.drafts = [];
+    this.guide = null;
+    this.privateGuide = null;
+    this.guideGenerating = false;
+    this.guidePublishing = false;
+    this.guideTier = this.getPreference('guideTier') || 'beginner';
     this.draftPositions = new Map();
     this.nextDraftIndex = 0;
     this.refreshPending = false;
@@ -36,7 +41,7 @@ var ZSRReaderView = class {
     this.toolbar.className = 'zsr-toolbar';
     this.highlightButton = this.createButton(doc, '公共划线', () => this.toggle('publicHighlights'));
     this.noteButton = this.createButton(doc, '公共笔记', () => this.toggle('publicNotes'));
-    this.aiButton = this.createButton(doc, 'AI 读论文', () => { void this.generateAI(); });
+    this.aiButton = this.createButton(doc, 'AI 导读', () => this.toggleGuidePanel());
     this.draftButton = this.createButton(doc, 'AI 草稿', () => this.jumpToNextDraft());
     this.draftButton.hidden = true;
     this.status = doc.createElement('span');
@@ -51,9 +56,12 @@ var ZSRReaderView = class {
       if (!this.pdfPath) throw new Error('PDF file is not available locally');
       const parent = item.parentID ? Zotero.Items.get(item.parentID) : null;
       const title = parent?.getField('title') || item.getField('title') || 'Untitled PDF';
+      this.title = title;
       const identified = await this.api.identify(this.pdfPath, title);
       this.documentId = identified.document.id;
       await this.reload();
+      try { await this.loadGuide(); }
+      catch (error) { this.log('Could not load shared guide', error); }
       this.attachOverlayWhenReady();
       clearInterval(this.pollTimer);
       this.pollTimer = setInterval(() => {
@@ -61,7 +69,7 @@ var ZSRReaderView = class {
       }, 20_000);
       this.setStatus('已连接', false);
     } catch (error) {
-      this.setStatus('本机服务未连接', true);
+      this.setStatus('共享服务未连接', true);
       this.log('Could not open social reading for this PDF', error);
     }
   }
@@ -118,6 +126,193 @@ var ZSRReaderView = class {
     this.draftButton.hidden = !this.drafts.length;
     this.draftButton.textContent = `AI 草稿 ${this.drafts.length}`;
     this.scheduleRender();
+  }
+
+  async loadGuide() {
+    if (!this.documentId) return;
+    const tier = this.guideTier;
+    const documentId = this.documentId;
+    const response = await this.api.guide(documentId, tier);
+    if (tier !== this.guideTier || documentId !== this.documentId || this.destroyed) return;
+    this.guide = response.guide;
+    this.updateGuidePanel();
+    this.scheduleRender();
+  }
+
+  toggleGuidePanel() {
+    if (this.guidePanel?.isConnected) {
+      this.guidePanel.remove();
+      this.guidePanel = null;
+      return;
+    }
+    const doc = this.outerDocument();
+    if (!doc) return;
+    const panel = doc.createElement('aside');
+    panel.className = 'zsr-guide-panel';
+    doc.body.append(panel);
+    this.guidePanel = panel;
+    this.updateGuidePanel();
+  }
+
+  updateGuidePanel() {
+    const panel = this.guidePanel;
+    if (!panel?.isConnected) return;
+    const doc = panel.ownerDocument;
+    panel.replaceChildren();
+    const heading = doc.createElement('header');
+    const title = doc.createElement('strong');
+    title.textContent = 'AI 导读';
+    const close = this.createButton(doc, '×', () => this.toggleGuidePanel());
+    close.className = 'zsr-close';
+    heading.append(title, close);
+    const intro = doc.createElement('p');
+    intro.textContent = '导读显示在正文中。AI 内容可能有误，请对照论文原文。';
+    const tierLabel = doc.createElement('label');
+    tierLabel.textContent = '丰富程度 ';
+    const tier = doc.createElement('select');
+    for (const [value, label] of [['beginner', '新手 · 详细'], ['standard', '标准 · 重点'], ['concise', '简洁 · 核心']]) {
+      const option = doc.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      tier.append(option);
+    }
+    tier.value = this.guideTier;
+    tier.addEventListener('change', () => {
+      this.guideTier = tier.value;
+      this.setPreference('guideTier', tier.value);
+      this.privateGuide = null;
+      this.guide = null;
+      void this.loadGuide().catch(error => this.setGuideMessage(error.message, true));
+      this.updateGuidePanel();
+    });
+    tierLabel.append(tier);
+    const visible = doc.createElement('label');
+    const checkbox = doc.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!this.getPreference('guideVisible');
+    checkbox.addEventListener('change', () => {
+      this.setPreference('guideVisible', checkbox.checked);
+      this.scheduleRender();
+    });
+    visible.append(checkbox, ' 在正文显示导读批注');
+    const status = doc.createElement('p');
+    status.className = 'zsr-guide-message';
+    status.textContent = this.guideGenerating ? 'Codex 正在生成导读，可能需要几分钟…' :
+      this.guidePublishing ? '正在公开共享导读…' :
+      this.guide ? '已复用共享导读，无需再次消耗你的 Codex 额度。' :
+      this.privateGuide ? '本机生成的私人预览，尚未共享。' : '当前档位尚无共享导读。';
+    const source = this.guide || this.privateGuide;
+    panel.append(heading, intro, tierLabel, visible, status);
+    if (source) {
+      const overview = doc.createElement('p');
+      overview.className = 'zsr-guide-overview';
+      overview.textContent = source.overview;
+      panel.append(overview);
+      const list = doc.createElement('ol');
+      for (const suggestion of source.suggestions) {
+        const item = doc.createElement('li');
+        const button = this.createButton(doc, `第 ${suggestion.pageIndex + 1} 页 · ${suggestion.comment}`,
+          () => this.jumpToGuide(suggestion));
+        item.append(button);
+        list.append(item);
+      }
+      panel.append(list);
+    }
+    if (!this.guide && !this.privateGuide) {
+      const generate = this.createButton(doc, '使用本机 Codex 生成导读', () => { void this.generateGuide(); });
+      generate.className = 'zsr-guide-primary';
+      generate.disabled = this.guideGenerating;
+      panel.append(generate);
+    }
+    if (this.privateGuide && !this.guide) {
+      const note = doc.createElement('p');
+      note.textContent = '确认后将导读文字、引用和页码公开给使用同一 PDF 的读者；不会上传 PDF 文件。';
+      const publish = this.createButton(doc, '公开共享这份导读', () => { void this.publishGuide(); });
+      publish.className = 'zsr-guide-primary';
+      publish.disabled = this.guidePublishing;
+      panel.append(note, publish);
+    }
+    const settings = doc.createElement('details');
+    const summary = doc.createElement('summary');
+    summary.textContent = '共享服务设置';
+    const endpoint = doc.createElement('input');
+    endpoint.type = 'url';
+    endpoint.placeholder = 'https://…workers.dev';
+    endpoint.value = this.api.endpoint;
+    const token = doc.createElement('input');
+    token.type = 'password';
+    token.placeholder = '个人发布令牌（阅读无需填写）';
+    const save = this.createButton(doc, '保存并连接', async () => {
+      try {
+        const value = endpoint.value.trim().replace(/\/+$/u, '');
+        if (value && !/^https:\/\//u.test(value)) throw new Error('共享服务必须使用 HTTPS');
+        if (token.value.trim()) await this.api.saveCloudToken(token.value.trim());
+        this.api.endpoint = value;
+        this.setPreference('cloudEndpoint', value);
+        const identified = await this.api.identify(this.pdfPath, this.title);
+        this.documentId = identified.document.id;
+        this.privateGuide = null;
+        await this.reload();
+        await this.loadGuide();
+        this.setGuideMessage('已连接共享服务');
+      } catch (error) { this.setGuideMessage(error.message, true); }
+    });
+    settings.append(summary, endpoint, token, save);
+    panel.append(settings);
+  }
+
+  setGuideMessage(message, error = false) {
+    const target = this.guidePanel?.querySelector('.zsr-guide-message');
+    if (target) {
+      target.textContent = message;
+      target.classList.toggle('zsr-error', error);
+    }
+    this.setStatus(message, error);
+  }
+
+  async generateGuide() {
+    if (!this.pdfPath || !this.documentId || this.guideGenerating) return;
+    const tier = this.guideTier;
+    const documentId = this.documentId;
+    this.guideGenerating = true;
+    this.updateGuidePanel();
+    let failure = null;
+    try {
+      // Recheck the shared cache immediately before spending the local user's tokens.
+      await this.loadGuide();
+      if (this.guide) return;
+      const result = await this.api.generateGuide(this.pdfPath, this.title, tier);
+      if (tier !== this.guideTier || documentId !== this.documentId || this.destroyed) return;
+      this.privateGuide = result.guide;
+      this.scheduleRender();
+    } catch (error) { failure = error; }
+    finally {
+      this.guideGenerating = false;
+      this.updateGuidePanel();
+      if (failure) this.setGuideMessage(failure.message, true);
+    }
+  }
+
+  async publishGuide() {
+    if (!this.privateGuide || this.guidePublishing) return;
+    this.guidePublishing = true;
+    this.updateGuidePanel();
+    let failure = null;
+    try {
+      await this.api.publishGuide(this.documentId, this.guideTier, this.privateGuide);
+      this.privateGuide = null;
+      await this.loadGuide();
+    } catch (error) { failure = error; }
+    finally {
+      this.guidePublishing = false;
+      this.updateGuidePanel();
+      this.setGuideMessage(failure ? failure.message : '导读已公开共享', !!failure);
+    }
+  }
+
+  jumpToGuide(suggestion) {
+    this.reader._internalReader.navigate(Components.utils.cloneInto(
+      { pageIndex: suggestion.pageIndex }, this.reader._iframeWindow));
   }
 
   jumpToNextDraft() {
@@ -240,6 +435,17 @@ var ZSRReaderView = class {
           click: event => { void this.openCard(null, draft, event); },
         });
       }
+      const guide = this.guide || this.privateGuide;
+      if (guide && this.getPreference('guideVisible')) {
+        for (const suggestion of guide.suggestions) {
+          if (suggestion.pageIndex !== pageIndex) continue;
+          const cssRects = ZSRGeometry.findQuoteRects(page, suggestion.quote);
+          if (!cssRects.length) continue;
+          const rects = cssRects.map(rect => ZSRGeometry.cssToPdf(rect, matrix));
+          this.draw(overlay, rects, matrix, { note: true, line: true, ai: true,
+            click: event => this.openGuideCard(suggestion, event) });
+        }
+      }
     }
   }
 
@@ -272,6 +478,26 @@ var ZSRReaderView = class {
 
   closeCard() { this.innerDocument()?.querySelector('.zsr-popover')?.remove(); }
 
+  openGuideCard(suggestion, event) {
+    const doc = this.innerDocument();
+    if (!doc) return;
+    this.closeCard();
+    const card = doc.createElement('div');
+    card.className = 'zsr-popover';
+    card.style.left = `${Math.max(12, Math.min(event.clientX + 8, doc.defaultView.innerWidth - 330))}px`;
+    card.style.top = `${Math.max(50, Math.min(event.clientY + 8, doc.defaultView.innerHeight - 320))}px`;
+    const title = doc.createElement('strong');
+    title.textContent = this.guide ? 'AI 导读 · 已共享' : 'AI 导读 · 私人预览';
+    const close = this.createButton(doc, '×', () => this.closeCard());
+    close.className = 'zsr-close';
+    const quote = doc.createElement('blockquote');
+    quote.textContent = suggestion.quote;
+    const comment = doc.createElement('p');
+    comment.textContent = suggestion.comment;
+    card.append(title, close, quote, comment);
+    doc.body.append(card);
+  }
+
   async openCard(mark, draft, event) {
     const doc = this.innerDocument();
     if (!doc) return;
@@ -296,7 +522,8 @@ var ZSRReaderView = class {
         if (!rects?.length) return;
         publish.disabled = true;
         try {
-          await this.api.publishDraft(draft.id, this.ownerId, { pageIndex: draft.pageIndex, rects });
+          await this.api.publishDraft(draft.id, this.ownerId, { pageIndex: draft.pageIndex, rects },
+            { ...draft, documentId: this.documentId });
           this.closeCard();
           await this.reload();
           this.onPublish?.(this.documentId, this);
@@ -431,5 +658,6 @@ var ZSRReaderView = class {
       .forEach(node => node.remove());
     this.outerDocument()?.querySelectorAll('.zsr-toolbar, .zsr-composer, #zsr-toolbar-style')
       .forEach(node => node.remove());
+    this.guidePanel?.remove();
   }
 };

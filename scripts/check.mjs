@@ -7,6 +7,8 @@ const files = [
   'plugin/bootstrap.js', 'plugin/content/main.js', 'plugin/content/geometry.js',
   'plugin/content/api.js', 'plugin/content/style.js', 'plugin/content/reader-ui.js',
   'server/index.mjs', 'server/store.mjs', 'server/ai.mjs',
+  'worker/index.mjs', 'worker/validation.mjs',
+  'scripts/provision-user.mjs', 'scripts/smoke-worker.mjs',
   'scripts/build.mjs', 'scripts/check.mjs',
 ];
 for (const file of files) {

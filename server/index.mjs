@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SocialStore } from './store.mjs';
-import { generateSuggestions } from './ai.mjs';
+import { generateSuggestions, generateGuide, GUIDE_TIERS } from './ai.mjs';
 
 const DOCUMENT = /^\/api\/documents\/([a-f0-9]{64})(?:\/(marks|drafts))?$/u;
 const MARK_REPLIES = /^\/api\/marks\/([0-9a-f-]{36})\/replies$/u;
@@ -88,7 +88,8 @@ async function hashPDF(filePath, storageRoot) {
 }
 
 export async function createApp({ dataDir, port = 34241, host = '127.0.0.1',
-  codexPath = 'codex', model = 'gpt-6-luna', aiGenerator = generateSuggestions } = {}) {
+  codexPath = 'codex', model = 'gpt-6-luna', aiGenerator = generateSuggestions,
+  guideGenerator = generateGuide } = {}) {
   if (host !== '127.0.0.1') throw new Error('The prototype service must bind to loopback');
   const root = resolve(dataDir || process.env.ZOTERO_DATA_DIR || join(homedir(), 'Zotero'));
   const storageRoot = await realpath(join(root, 'storage'));
@@ -116,6 +117,15 @@ export async function createApp({ dataDir, port = 34241, host = '127.0.0.1',
         const pdf = await hashPDF(body.filePath, storageRoot);
         const document = store.ensureDocument(pdf.id, requiredString(body.title, 'title', 400));
         return respond(response, 200, { document: { id: document.id, title: document.title } });
+      }
+      if (method === 'POST' && url.pathname === '/api/guides/generate') {
+        const body = await readJSON(request);
+        const pdf = await hashPDF(body.filePath, storageRoot);
+        const tier = requiredString(body.tier, 'tier', 20);
+        if (!GUIDE_TIERS[tier]) throw new HttpError(400, 'Unknown guide tier');
+        const guide = await guideGenerator({ pdfPath: pdf.path,
+          title: requiredString(body.title, 'title', 400), tier, runtimeDir, codexPath, model });
+        return respond(response, 200, { guide });
       }
       const match = url.pathname.match(DOCUMENT);
       if (match) {

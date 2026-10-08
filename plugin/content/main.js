@@ -10,7 +10,7 @@ var ZoteroSocialReadingPlugin = {
 
   async start({ id, version }) {
     this.id = id;
-    this.api = new ZSRApi(Zotero.DataDirectory.dir);
+    this.api = new ZSRApi(Zotero.DataDirectory.dir, this.getPreference('cloudEndpoint'));
     let ownerId = this.getPreference('ownerId');
     if (!ownerId) {
       ownerId = Services.uuid.generateUUID().toString().replace(/[{}]/gu, '');

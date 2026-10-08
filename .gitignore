@@ -3,3 +3,5 @@ dist/
 .runtime/
 *.log
 .DS_Store
+wrangler.jsonc
+.wrangler/
