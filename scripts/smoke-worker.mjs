@@ -44,4 +44,9 @@ assert.equal(reused.data.reused, true);
 const shared = (await send('GET', `/v1/documents/${digest}/guides?tier=beginner`)).data.guide;
 assert.equal(shared.suggestions.length, 1);
 assert.equal(shared.overview, guide.overview);
+const immersive = { ...guide, id: randomUUID(), promptVersion: 2,
+  suggestions: Array.from({ length: 21 }, (_, pageIndex) => ({ ...guide.suggestions[0], pageIndex })) };
+assert.equal((await send('POST', `/v1/documents/${digest}/guides`, immersive, true)).status, 201);
+assert.equal((await send('GET', `/v1/documents/${digest}/guides?tier=beginner&version=2`)).data.guide.suggestions.length, 21);
+assert.equal((await send('GET', `/v1/documents/${digest}/guides?tier=beginner`)).data.guide.promptVersion, 1);
 console.log('Worker smoke passed: anonymous reading, authenticated publishing, and guide reuse.');

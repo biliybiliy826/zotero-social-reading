@@ -106,18 +106,46 @@ var ZSRApi = class {
   }
   guide(documentId, tier) {
     if (!this.cloudEnabled) return Promise.resolve({ guide: null });
-    return this.request('GET', `/documents/${documentId}/guides?tier=${encodeURIComponent(tier)}`);
+    const version = tier === 'beginner' ? 2 : 1;
+    return this.request('GET', `/documents/${documentId}/guides?tier=${encodeURIComponent(tier)}&version=${version}`);
+  }
+  privateGuidePath(documentId, tier) {
+    if (!/^[a-f0-9]{64}$/u.test(documentId) || !['beginner', 'standard', 'concise'].includes(tier)) {
+      throw new Error('Invalid private guide key');
+    }
+    const version = tier === 'beginner' ? 2 : 1;
+    return PathUtils.join(this.dataDir, 'social-reading', 'guides', `${documentId}-${tier}-v${version}.json`);
+  }
+  async loadPrivateGuide(documentId, tier) {
+    const path = this.privateGuidePath(documentId, tier);
+    if (!(await IOUtils.exists(path))) return null;
+    const guide = JSON.parse(await IOUtils.readUTF8(path));
+    if (typeof guide?.overview !== 'string' || !Array.isArray(guide.suggestions) ||
+      !guide.suggestions.length || guide.suggestions.length > 30) {
+      throw new Error('Saved private guide is invalid');
+    }
+    return guide;
+  }
+  async savePrivateGuide(documentId, tier, guide) {
+    const path = this.privateGuidePath(documentId, tier);
+    await IOUtils.makeDirectory(PathUtils.parent(path), { ignoreExisting: true });
+    await IOUtils.writeUTF8(path, JSON.stringify(guide));
+    const file = Components.classes['@mozilla.org/file/local;1']
+      .createInstance(Components.interfaces.nsIFile);
+    file.initWithPath(path);
+    file.permissions = 0o600;
   }
   generateGuide(filePath, title, tier) {
     return this.request('POST', '/guides/generate', { filePath, title, tier },
-      { cloud: false, timeout: 210_000 });
+      { cloud: false, timeout: 300_000 });
   }
   async publishGuide(documentId, tier, guide) {
     if (!this.cloudEnabled) throw new Error('请先配置共享服务地址');
     await this.ensureCloudDocument(documentId);
     return this.request('POST', `/documents/${documentId}/guides`, {
       id: Services.uuid.generateUUID().toString().replace(/[{}]/gu, ''),
-      tier, promptVersion: 1, overview: guide.overview, suggestions: guide.suggestions,
+      tier, promptVersion: tier === 'beginner' ? 2 : 1,
+      overview: guide.overview, suggestions: guide.suggestions,
     });
   }
   async saveCloudToken(token) {

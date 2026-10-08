@@ -21,7 +21,7 @@ The pilot has no self-registration. Use `scripts/provision-user.mjs` with a priv
 
 ## Verify and rollback
 
-`GET /v1/health` needs no credential. Anonymous `GET /v1/documents/<exact-PDF-SHA256>/guides?tier=beginner` should return the shared guide. In Zotero, enter the endpoint in **AI 导读 → 共享服务设置**, open the same PDF in another reader, and confirm the guide appears without a new Codex process. Cloud network access can fail intermittently through the user's local proxy; distinguish this from a Worker error by checking `/v1/health` from the same machine.
+`GET /v1/health` needs no credential. Anonymous `GET /v1/documents/<exact-PDF-SHA256>/guides?tier=beginner&version=2` returns a new immersive beginner guide when one has been explicitly published. Omit `version` to read earlier version 1 guides. In Zotero, enter the endpoint in **AI 导读 → 共享服务设置**, open the same PDF in another reader, and confirm the guide appears without a new Codex process. Cloud network access can fail intermittently through the user's local proxy; distinguish this from a Worker error by checking `/v1/health` from the same machine.
 
 To stop using the cloud service in Zotero, clear its endpoint in the panel. This switches published comments back to the local prototype and leaves the cloud data intact. Roll back a bad Worker deployment through Cloudflare's version history after checking D1 schema compatibility. Do not delete D1 until public data has been exported and users have been informed.
 

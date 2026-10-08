@@ -19,6 +19,7 @@ var ZSRReaderView = class {
     this.guideGenerating = false;
     this.guidePublishing = false;
     this.guideTier = this.getPreference('guideTier') || 'beginner';
+    this.guideStep = 0;
     this.draftPositions = new Map();
     this.nextDraftIndex = 0;
     this.refreshPending = false;
@@ -132,9 +133,15 @@ var ZSRReaderView = class {
     if (!this.documentId) return;
     const tier = this.guideTier;
     const documentId = this.documentId;
+    const privateGuide = await this.api.loadPrivateGuide(documentId, tier);
+    if (tier !== this.guideTier || documentId !== this.documentId || this.destroyed) return;
+    this.privateGuide = privateGuide;
+    this.updateGuidePanel();
+    this.scheduleRender();
     const response = await this.api.guide(documentId, tier);
     if (tier !== this.guideTier || documentId !== this.documentId || this.destroyed) return;
     this.guide = response.guide;
+    this.guideStep = Math.min(this.guideStep, Math.max(0, (this.guide?.suggestions.length || 1) - 1));
     this.updateGuidePanel();
     this.scheduleRender();
   }
@@ -182,6 +189,7 @@ var ZSRReaderView = class {
       this.setPreference('guideTier', tier.value);
       this.privateGuide = null;
       this.guide = null;
+      this.guideStep = 0;
       void this.loadGuide().catch(error => this.setGuideMessage(error.message, true));
       this.updateGuidePanel();
     });
@@ -204,19 +212,55 @@ var ZSRReaderView = class {
     const source = this.guide || this.privateGuide;
     panel.append(heading, intro, tierLabel, visible, status);
     if (source) {
-      const overview = doc.createElement('p');
+      const overview = doc.createElement('details');
       overview.className = 'zsr-guide-overview';
-      overview.textContent = source.overview;
+      const overviewHeading = doc.createElement('summary');
+      overviewHeading.textContent = '导读总览';
+      const overviewText = doc.createElement('p');
+      overviewText.textContent = source.overview;
+      overview.append(overviewHeading, overviewText);
       panel.append(overview);
+      const steps = source.suggestions;
+      const active = Math.min(this.guideStep, steps.length - 1);
+      const suggestion = steps[active];
+      const step = doc.createElement('section');
+      step.className = 'zsr-guide-step';
+      const progress = doc.createElement('strong');
+      progress.textContent = `导读 ${active + 1} / ${steps.length} · PDF 第 ${suggestion.pageIndex + 1} 页`;
+      const quote = doc.createElement('blockquote');
+      quote.textContent = suggestion.quote;
+      const explanation = doc.createElement('p');
+      explanation.textContent = suggestion.comment;
+      const controls = doc.createElement('div');
+      controls.className = 'zsr-guide-controls';
+      const previous = this.createButton(doc,
+        active ? `上一条 · 第 ${steps[active - 1].pageIndex + 1} 页` : '上一条',
+        () => this.jumpToGuide(active - 1));
+      previous.disabled = active === 0;
+      const locate = this.createButton(doc, '定位原文', () => this.jumpToGuide(active));
+      const next = this.createButton(doc,
+        active < steps.length - 1 ? `下一条 · 第 ${steps[active + 1].pageIndex + 1} 页` : '下一条',
+        () => this.jumpToGuide(active + 1));
+      next.disabled = active === steps.length - 1;
+      controls.append(previous, locate, next);
+      step.append(progress, controls, quote, explanation);
+      panel.append(step);
+      const index = doc.createElement('details');
+      index.className = 'zsr-guide-index';
+      const summary = doc.createElement('summary');
+      summary.textContent = `全部 ${steps.length} 条导读`;
+      index.append(summary);
       const list = doc.createElement('ol');
-      for (const suggestion of source.suggestions) {
+      for (const [position, itemSuggestion] of steps.entries()) {
         const item = doc.createElement('li');
-        const button = this.createButton(doc, `第 ${suggestion.pageIndex + 1} 页 · ${suggestion.comment}`,
-          () => this.jumpToGuide(suggestion));
+        const button = this.createButton(doc, `第 ${itemSuggestion.pageIndex + 1} 页 · ${itemSuggestion.comment.slice(0, 60)}…`,
+          () => this.jumpToGuide(position));
+        if (position === active) button.setAttribute('aria-current', 'step');
         item.append(button);
         list.append(item);
       }
-      panel.append(list);
+      index.append(list);
+      panel.append(index);
     }
     if (!this.guide && !this.privateGuide) {
       const generate = this.createButton(doc, '使用本机 Codex 生成导读', () => { void this.generateGuide(); });
@@ -279,12 +323,16 @@ var ZSRReaderView = class {
     let failure = null;
     try {
       // Recheck the shared cache immediately before spending the local user's tokens.
-      await this.loadGuide();
-      if (this.guide) return;
+      try { await this.loadGuide(); }
+      catch (error) { this.log('Shared guide cache unavailable; generating a private guide', error); }
+      if (this.guide || this.privateGuide) return;
       const result = await this.api.generateGuide(this.pdfPath, this.title, tier);
       if (tier !== this.guideTier || documentId !== this.documentId || this.destroyed) return;
       this.privateGuide = result.guide;
+      this.guideStep = 0;
       this.scheduleRender();
+      try { await this.api.savePrivateGuide(documentId, tier, result.guide); }
+      catch (error) { failure = new Error(`导读已生成，但保存到 Zotero 数据目录失败：${error.message}`); }
     } catch (error) { failure = error; }
     finally {
       this.guideGenerating = false;
@@ -300,7 +348,6 @@ var ZSRReaderView = class {
     let failure = null;
     try {
       await this.api.publishGuide(this.documentId, this.guideTier, this.privateGuide);
-      this.privateGuide = null;
       await this.loadGuide();
     } catch (error) { failure = error; }
     finally {
@@ -310,9 +357,28 @@ var ZSRReaderView = class {
     }
   }
 
-  jumpToGuide(suggestion) {
+  jumpToGuide(index) {
+    const source = this.guide || this.privateGuide;
+    if (!source?.suggestions[index]) return;
+    this.guideStep = index;
+    if (!this.getPreference('guideVisible')) this.setPreference('guideVisible', true);
+    this.updateGuidePanel();
+    if (this.guidePanel) this.guidePanel.scrollTop = 0;
+    const suggestion = source.suggestions[index];
     this.reader._internalReader.navigate(Components.utils.cloneInto(
       { pageIndex: suggestion.pageIndex }, this.reader._iframeWindow));
+    const seek = attempt => {
+      if (this.destroyed || this.guideStep !== index) return;
+      try { this.render(); }
+      catch (error) { this.log('Could not locate AI guide step', error); }
+      const page = this.innerDocument()?.querySelector(`.page[data-page-number="${suggestion.pageIndex + 1}"]`);
+      const marker = page?.querySelector(`.zsr-guide-marker[data-guide-index="${index}"]`);
+      if (marker) {
+        marker.scrollIntoView(Components.utils.cloneInto({ block: 'center', inline: 'nearest' }, this.innerWindow()));
+      } else if (attempt < 30) setTimeout(() => seek(attempt + 1), 200);
+      else this.setGuideMessage('已跳到对应页，但无法在正文定位这条引用', true);
+    };
+    setTimeout(() => seek(0), 200);
   }
 
   jumpToNextDraft() {
@@ -437,19 +503,19 @@ var ZSRReaderView = class {
       }
       const guide = this.guide || this.privateGuide;
       if (guide && this.getPreference('guideVisible')) {
-        for (const suggestion of guide.suggestions) {
+        for (const [index, suggestion] of guide.suggestions.entries()) {
           if (suggestion.pageIndex !== pageIndex) continue;
           const cssRects = ZSRGeometry.findQuoteRects(page, suggestion.quote);
           if (!cssRects.length) continue;
           const rects = cssRects.map(rect => ZSRGeometry.cssToPdf(rect, matrix));
-          this.draw(overlay, rects, matrix, { note: true, line: true, ai: true,
-            click: event => this.openGuideCard(suggestion, event) });
+          this.draw(overlay, rects, matrix, { note: true, line: true, ai: true, guideIndex: index,
+            click: event => this.openGuideCard(suggestion, event, index) });
         }
       }
     }
   }
 
-  draw(overlay, rects, matrix, { note, line, ai, draft, click }) {
+  draw(overlay, rects, matrix, { note, line, ai, draft, guideIndex, click }) {
     const boxes = rects.map(rect => ZSRGeometry.pdfToCss(rect, matrix));
     if (line) {
       for (const [left, top, right, bottom] of boxes) {
@@ -466,9 +532,11 @@ var ZSRReaderView = class {
     const last = boxes.at(-1);
     const marker = overlay.ownerDocument.createElement('button');
     marker.type = 'button';
-    marker.className = `zsr-marker${draft ? ' zsr-draft-marker' : ''}`;
+    marker.className = `zsr-marker${draft ? ' zsr-draft-marker' : ''}${guideIndex !== undefined ? ' zsr-guide-marker' : ''}`;
+    if (guideIndex !== undefined) marker.dataset.guideIndex = String(guideIndex);
     marker.textContent = draft ? 'AI 草稿' : ai ? 'AI' : '评';
-    marker.title = draft ? '私人 AI 评论草稿' : ai ? 'AI 发表的评论' : '查看公共评论';
+    marker.title = draft ? '私人 AI 评论草稿' : guideIndex !== undefined ? 'AI 导读批注' :
+      ai ? 'AI 发表的评论' : '查看公共评论';
     marker.style.left = `${Math.min(last[2] + 5, (overlay.parentElement?.clientWidth || 1000) - 42)}px`;
     marker.style.top = `${last[1]}px`;
     marker.addEventListener('pointerdown', event => event.stopPropagation());
@@ -478,9 +546,11 @@ var ZSRReaderView = class {
 
   closeCard() { this.innerDocument()?.querySelector('.zsr-popover')?.remove(); }
 
-  openGuideCard(suggestion, event) {
+  openGuideCard(suggestion, event, index) {
     const doc = this.innerDocument();
     if (!doc) return;
+    this.guideStep = index;
+    this.updateGuidePanel();
     this.closeCard();
     const card = doc.createElement('div');
     card.className = 'zsr-popover';

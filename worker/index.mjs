@@ -70,9 +70,12 @@ function markFrom(row) {
 function validateGuide(body) {
   const tier = requiredString(body.tier, 'tier', 20);
   if (!tiers.has(tier)) throw new ApiError(400, 'Unknown guide tier');
-  if (body.promptVersion !== 1) throw new ApiError(400, 'Unsupported guide prompt version');
-  if (!Array.isArray(body.suggestions) || body.suggestions.length < 1 || body.suggestions.length > 20) {
-    throw new ApiError(400, 'Guide needs 1–20 comments');
+  if (![1, 2].includes(body.promptVersion) || (body.promptVersion === 2 && tier !== 'beginner')) {
+    throw new ApiError(400, 'Unsupported guide prompt version');
+  }
+  const limit = body.promptVersion === 2 ? 30 : 20;
+  if (!Array.isArray(body.suggestions) || body.suggestions.length < 1 || body.suggestions.length > limit) {
+    throw new ApiError(400, `Guide needs 1–${limit} comments`);
   }
   const suggestions = body.suggestions.map(raw => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -83,7 +86,8 @@ function validateGuide(body) {
       comment: requiredString(raw.comment, 'comment', 1500),
       kind: ['key_point', 'question'].includes(raw.kind) ? raw.kind : 'key_point' };
   });
-  return { tier, overview: requiredString(body.overview, 'overview', 5000), suggestions };
+  return { tier, promptVersion: body.promptVersion,
+    overview: requiredString(body.overview, 'overview', 5000), suggestions };
 }
 
 async function route(request, env) {
@@ -158,9 +162,13 @@ async function route(request, env) {
       if (method === 'GET') {
         const tier = url.searchParams.get('tier');
         if (!tiers.has(tier)) throw new ApiError(400, 'Unknown guide tier');
+        const version = Number(url.searchParams.get('version') || 1);
+        if (![1, 2].includes(version) || (version === 2 && tier !== 'beginner')) {
+          throw new ApiError(400, 'Unsupported guide prompt version');
+        }
         const row = await db.prepare(`SELECT g.*, u.display_name FROM guides g JOIN users u ON u.id = g.author_id
-          WHERE g.document_id = ? AND g.tier = ? AND g.prompt_version = 1 AND g.deleted_at IS NULL`)
-          .bind(id, tier).first();
+          WHERE g.document_id = ? AND g.tier = ? AND g.prompt_version = ? AND g.deleted_at IS NULL`)
+          .bind(id, tier, version).first();
         return json({ guide: row ? { id: row.id, tier: row.tier, promptVersion: row.prompt_version,
           ...JSON.parse(row.content_json), authorName: row.display_name, createdAt: row.created_at } : null });
       }
@@ -171,11 +179,11 @@ async function route(request, env) {
         const guideId = uuid(body.id);
         await db.prepare(`INSERT OR IGNORE INTO guides
           (id, document_id, tier, prompt_version, content_json, author_id, created_at)
-          VALUES (?, ?, ?, 1, ?, ?, ?)`).bind(guideId, id, guide.tier,
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(guideId, id, guide.tier, guide.promptVersion,
           JSON.stringify({ overview: guide.overview, suggestions: guide.suggestions }),
           user.id, new Date().toISOString()).run();
-        const row = await db.prepare('SELECT id FROM guides WHERE document_id = ? AND tier = ? AND prompt_version = 1')
-          .bind(id, guide.tier).first();
+        const row = await db.prepare('SELECT id FROM guides WHERE document_id = ? AND tier = ? AND prompt_version = ?')
+          .bind(id, guide.tier, guide.promptVersion).first();
         return json({ id: row.id, reused: row.id !== guideId }, row.id === guideId ? 201 : 200);
       }
     }

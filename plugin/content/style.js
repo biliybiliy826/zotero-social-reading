@@ -21,7 +21,16 @@ var ZSRStyle = {
     .zsr-guide-panel select, .zsr-guide-panel details input { box-sizing: border-box; width: 100%; padding: 7px; border: 1px solid #adbed1; border-radius: 5px; font: inherit; }
     .zsr-guide-panel label input[type=checkbox] { margin-right: 6px; }
     .zsr-guide-panel .zsr-guide-message { padding: 8px; border-radius: 6px; background: #f2f6fa; }
-    .zsr-guide-panel .zsr-guide-overview { white-space: pre-wrap; }
+    .zsr-guide-panel .zsr-guide-overview { margin: 10px 0; }
+    .zsr-guide-panel .zsr-guide-overview p { white-space: pre-wrap; }
+    .zsr-guide-step { margin: 14px 0; padding: 12px; border: 1px solid #b9d4ee; border-radius: 8px; background: #f5faff; }
+    .zsr-guide-step blockquote { margin: 9px 0; padding: 7px 9px; border-left: 3px solid #8aa9c9; background: #fff; }
+    .zsr-guide-step p { white-space: pre-wrap; }
+    .zsr-guide-controls { display: flex; gap: 6px; justify-content: space-between; margin-top: 9px; }
+    .zsr-guide-controls button { padding: 6px 8px; border: 1px solid #8aa9c9; border-radius: 5px; background: #fff; color: #174d7b; cursor: pointer; font: inherit; }
+    .zsr-guide-controls button:disabled { opacity: .45; cursor: default; }
+    .zsr-guide-index { margin: 12px 0; }
+    .zsr-guide-index [aria-current=step] { font-weight: bold; }
     .zsr-guide-panel ol { padding-left: 22px; }
     .zsr-guide-panel li { margin: 8px 0; }
     .zsr-guide-panel li button { border: 0; background: none; color: #174d7b; cursor: pointer; text-align: left; font: inherit; }
