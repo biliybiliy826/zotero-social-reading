@@ -6,6 +6,7 @@ const root = resolve(import.meta.dirname, '..');
 const files = [
   'plugin/bootstrap.js', 'plugin/content/main.js', 'plugin/content/geometry.js',
   'plugin/content/api.js', 'plugin/content/style.js', 'plugin/content/reader-ui.js',
+  'plugin/content/rich-text.js', 'plugin/content/codex-bridge.js',
   'server/index.mjs', 'server/store.mjs', 'server/ai.mjs',
   'worker/index.mjs', 'worker/validation.mjs',
   'scripts/provision-user.mjs', 'scripts/smoke-worker.mjs',

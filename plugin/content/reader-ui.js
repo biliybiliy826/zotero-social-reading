@@ -38,6 +38,7 @@ var ZSRReaderView = class {
     if (this.destroyed || this.toolbar?.isConnected) return;
     const doc = toolbarHost.ownerDocument;
     this.ensureStyle(doc, 'zsr-toolbar-style', ZSRStyle.toolbar);
+    this.ensureStyle(doc, 'zsr-rich-style', ZSRStyle.rich);
     this.toolbar = doc.createElement('div');
     this.toolbar.className = 'zsr-toolbar';
     this.highlightButton = this.createButton(doc, '公共划线', () => this.toggle('publicHighlights'));
@@ -81,6 +82,24 @@ var ZSRReaderView = class {
     button.className = 'zsr-toolbar-button';
     button.textContent = label;
     button.addEventListener('click', event => { event.stopPropagation(); click(); });
+    return button;
+  }
+
+  askCodexButton(doc, discussion, errorHost) {
+    const button = this.createButton(doc, '问 Codex', async () => {
+      button.disabled = true;
+      try {
+        await ZSRCodexBridge.prepare(this.reader, {
+          ...discussion(), title: this.title,
+        });
+        errorHost.querySelector('.zsr-error-message')?.remove();
+        this.setStatus('已加入 Codex 草稿，请检查后发送');
+      } catch (error) {
+        this.showCardError(errorHost, error);
+        this.setStatus(error.message || String(error), true);
+      } finally { button.disabled = false; }
+    });
+    button.className = 'zsr-ask-codex';
     return button;
   }
 
@@ -216,8 +235,7 @@ var ZSRReaderView = class {
       overview.className = 'zsr-guide-overview';
       const overviewHeading = doc.createElement('summary');
       overviewHeading.textContent = '导读总览';
-      const overviewText = doc.createElement('p');
-      overviewText.textContent = source.overview;
+      const overviewText = ZSRRichText.render(doc, source.overview);
       overview.append(overviewHeading, overviewText);
       panel.append(overview);
       const steps = source.suggestions;
@@ -229,8 +247,7 @@ var ZSRReaderView = class {
       progress.textContent = `导读 ${active + 1} / ${steps.length} · PDF 第 ${suggestion.pageIndex + 1} 页`;
       const quote = doc.createElement('blockquote');
       quote.textContent = suggestion.quote;
-      const explanation = doc.createElement('p');
-      explanation.textContent = suggestion.comment;
+      const explanation = ZSRRichText.render(doc, suggestion.comment);
       const controls = doc.createElement('div');
       controls.className = 'zsr-guide-controls';
       const previous = this.createButton(doc,
@@ -243,7 +260,11 @@ var ZSRReaderView = class {
         () => this.jumpToGuide(active + 1));
       next.disabled = active === steps.length - 1;
       controls.append(previous, locate, next);
-      step.append(progress, controls, quote, explanation);
+      const ask = this.askCodexButton(doc, () => ({
+        kind: 'guide', pageIndex: suggestion.pageIndex,
+        quote: suggestion.quote, body: suggestion.comment,
+      }), step);
+      step.append(progress, controls, quote, explanation, ask);
       panel.append(step);
       const index = doc.createElement('details');
       index.className = 'zsr-guide-index';
@@ -417,6 +438,7 @@ var ZSRReaderView = class {
     const doc = win?.document;
     if (!doc?.querySelector('.page') || this.observer) return !!this.observer;
     this.ensureStyle(doc, 'zsr-page-style', ZSRStyle.page);
+    this.ensureStyle(doc, 'zsr-rich-style', ZSRStyle.rich);
     this.scrollTarget = doc.querySelector('#viewerContainer') || win;
     this.resizeWindow = win;
     this.onScroll = () => this.scheduleRender();
@@ -562,9 +584,12 @@ var ZSRReaderView = class {
     close.className = 'zsr-close';
     const quote = doc.createElement('blockquote');
     quote.textContent = suggestion.quote;
-    const comment = doc.createElement('p');
-    comment.textContent = suggestion.comment;
-    card.append(title, close, quote, comment);
+    const comment = ZSRRichText.render(doc, suggestion.comment);
+    const ask = this.askCodexButton(doc, () => ({
+      kind: 'guide', pageIndex: suggestion.pageIndex,
+      quote: suggestion.quote, body: suggestion.comment,
+    }), card);
+    card.append(title, close, quote, comment, ask);
     doc.body.append(card);
   }
 
@@ -583,9 +608,12 @@ var ZSRReaderView = class {
     close.className = 'zsr-close';
     const quote = doc.createElement('blockquote');
     quote.textContent = draft?.quote || mark.quote;
-    const comment = doc.createElement('p');
-    comment.textContent = draft?.comment || mark.comment || '这段划线尚无评论。';
-    card.append(title, close, quote, comment);
+    const comment = ZSRRichText.render(doc, draft?.comment || mark.comment || '这段划线尚无评论。');
+    const ask = this.askCodexButton(doc, () => ({
+      kind: draft ? 'draft' : 'comment', pageIndex: draft?.pageIndex ?? mark.pageIndex,
+      quote: draft?.quote || mark.quote, body: draft?.comment || mark.comment,
+    }), card);
+    card.append(title, close, quote, comment, ask);
     if (draft) {
       const publish = this.createButton(doc, '发表这条 AI 评论', async () => {
         const rects = this.draftPositions.get(draft.id);
@@ -607,11 +635,12 @@ var ZSRReaderView = class {
       card.append(replies);
       const form = doc.createElement('form');
       const input = doc.createElement('textarea');
-      input.placeholder = '回复这条评论…';
+      input.placeholder = '回复这条评论…支持 Markdown 和 $LaTeX$';
       input.maxLength = 5000;
+      const preview = this.composePreview(doc, input);
       const submit = doc.createElement('button');
       submit.textContent = '回复';
-      form.append(input, submit);
+      form.append(input, preview, submit);
       form.addEventListener('submit', async e => {
         e.preventDefault();
         if (!input.value.trim()) return;
@@ -619,6 +648,8 @@ var ZSRReaderView = class {
         try {
           await this.api.reply(mark.id, { body: input.value.trim(), ownerId: this.ownerId, authorName: this.authorName });
           input.value = '';
+          preview.replaceChildren();
+          preview.hidden = true;
           await this.loadReplies(mark.id, replies);
         } catch (error) { this.showCardError(card, error); }
         finally { submit.disabled = false; }
@@ -634,9 +665,19 @@ var ZSRReaderView = class {
     const doc = target.ownerDocument;
     target.replaceChildren();
     for (const reply of response.replies) {
-      const p = doc.createElement('p');
-      p.textContent = `${reply.authorName}：${reply.body}`;
-      target.append(p);
+      const item = doc.createElement('div');
+      item.className = 'zsr-reply';
+      const author = doc.createElement('span');
+      author.className = 'zsr-reply-author';
+      author.textContent = reply.authorName;
+      const body = ZSRRichText.render(doc, reply.body);
+      const mark = this.marks.find(candidate => candidate.id === markId);
+      const ask = this.askCodexButton(doc, () => ({
+        kind: 'reply', pageIndex: mark?.pageIndex,
+        quote: mark?.quote, body: `${mark?.comment || ''}\n\n${reply.authorName}：${reply.body}`,
+      }), item);
+      item.append(author, body, ask);
+      target.append(item);
     }
   }
 
@@ -648,6 +689,19 @@ var ZSRReaderView = class {
       card.append(element);
     }
     element.textContent = error.message || String(error);
+  }
+
+  composePreview(doc, input) {
+    const preview = doc.createElement('div');
+    preview.className = 'zsr-compose-preview';
+    preview.hidden = true;
+    input.addEventListener('input', () => {
+      const value = input.value.trim();
+      preview.hidden = !value;
+      if (value) preview.replaceChildren(ZSRRichText.render(doc, value));
+      else preview.replaceChildren();
+    });
+    return preview;
   }
 
   async generateAI() {
@@ -673,6 +727,7 @@ var ZSRReaderView = class {
     const pageIndex = Number(position.pageIndex);
     if (!Number.isInteger(pageIndex)) return;
     this.ensureStyle(doc, 'zsr-toolbar-style', ZSRStyle.toolbar);
+    this.ensureStyle(doc, 'zsr-rich-style', ZSRStyle.rich);
     const button = this.createButton(doc, '发表讨论', () => this.openComposer(doc, { text, pageIndex, rects }));
     button.className = 'zsr-selection-button';
     button.addEventListener('pointerdown', event => event.stopPropagation());
@@ -691,11 +746,12 @@ var ZSRReaderView = class {
     quote.textContent = selection.text;
     const form = doc.createElement('form');
     const input = doc.createElement('textarea');
-    input.placeholder = '写下你的想法，也可以只发表这段划线';
+    input.placeholder = '写下你的想法；支持 Markdown 和 $LaTeX$，也可以只发表划线';
     input.maxLength = 5000;
+    const preview = this.composePreview(doc, input);
     const submit = doc.createElement('button');
     submit.textContent = '确认公开发表';
-    form.append(input, submit);
+    form.append(input, preview, submit);
     form.addEventListener('submit', async event => {
       event.preventDefault();
       submit.disabled = true;
@@ -711,7 +767,11 @@ var ZSRReaderView = class {
         this.setStatus('已发表');
       } catch (error) { this.showCardError(card, error); submit.disabled = false; }
     });
-    card.append(title, close, quote, form);
+    const ask = this.askCodexButton(doc, () => ({
+      kind: 'comment', pageIndex: selection.pageIndex,
+      quote: selection.text, body: input.value.trim(),
+    }), card);
+    card.append(title, close, quote, form, ask);
     doc.body.append(card);
     input.focus();
   }
@@ -724,9 +784,9 @@ var ZSRReaderView = class {
     this.observer?.disconnect();
     this.scrollTarget?.removeEventListener('scroll', this.onScroll, true);
     this.resizeWindow?.removeEventListener('resize', this.onScroll);
-    this.innerDocument()?.querySelectorAll('.zsr-overlay, .zsr-popover, #zsr-page-style')
+    this.innerDocument()?.querySelectorAll('.zsr-overlay, .zsr-popover, #zsr-page-style, #zsr-rich-style')
       .forEach(node => node.remove());
-    this.outerDocument()?.querySelectorAll('.zsr-toolbar, .zsr-composer, #zsr-toolbar-style')
+    this.outerDocument()?.querySelectorAll('.zsr-toolbar, .zsr-composer, #zsr-toolbar-style, #zsr-rich-style')
       .forEach(node => node.remove());
     this.guidePanel?.remove();
   }
