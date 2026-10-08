@@ -1,0 +1,14 @@
+[Unit]
+Description=Zotero Social Reading local prototype service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/zotero-social-reading
+EnvironmentFile=-%h/.config/zotero-social-reading/service.env
+ExecStart=/usr/bin/node %h/projects/zotero-social-reading/server/index.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
